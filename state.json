@@ -25,5 +25,7 @@
  "fail": {
   "date": "",
   "n": 0
- }
+ },
+ "zero_streak": 0,
+ "zero_alerted": false
 }

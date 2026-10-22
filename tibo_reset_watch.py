@@ -42,6 +42,7 @@ ALL_CATEGORIES_HINT = "「Codex 产品更新」「路线图线索」「功能讨
 STATE_FILE = os.environ.get("TIBO_STATE_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json"))
 STATE_MAX = 300  # 最多记 300 条已见 guid
 MAX_FAIL_PER_DAY = 6  # 推送连续失败上限，防止 5 分钟一轮把接口刷爆（尤其密钥失效时）
+ZERO_ALERT_THRESHOLD = 6  # 连续 6 次抓不到公告（约半小时）就发一次哑火告警
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) tibo-reset-watch/1.0"
 
@@ -135,7 +136,13 @@ def save_state(state):
     """
     state["seen"] = state["seen"][-STATE_MAX:]
     payload = json.dumps(
-        {"seen": state["seen"], "inited": state["inited"], "fail": state.get("fail") or {"date": "", "n": 0}},
+        {
+            "seen": state["seen"],
+            "inited": state["inited"],
+            "fail": state.get("fail") or {"date": "", "n": 0},
+            "zero_streak": int(state.get("zero_streak") or 0),
+            "zero_alerted": bool(state.get("zero_alerted")),
+        },
         ensure_ascii=False, indent=1,
     )
     if os.path.exists(STATE_FILE):
@@ -259,19 +266,51 @@ def main():
     ap.add_argument("--reinit", action="store_true", help="清空基线重新播种（不会补推历史）")
     args = ap.parse_args()
 
-    raw = http_get(FEED_URL)
-    items = parse_feed(raw)
-    if not items:
-        print("[error] RSS 里没有条目，检查源是否变更", file=sys.stderr)
-        return 2
-    print(f"[feed] 抓到 {len(items)} 条，最新：{items[0]['title']}（{fmt_local(items[0]['pubDate'])}）")
+    channels = detect_channels()
+    print(f"[chan] 已识别通道：{channels or '无（将只记录不推送）'}")
 
     state = load_state()
     if args.reinit:
         state = {"seen": [], "inited": False}
 
-    channels = detect_channels()
-    print(f"[chan] 已识别通道：{channels or '无（将只记录不推送）'}")
+    # ---- 抓取：把「抓不到」也当成一种需要上报的状态 ----
+    # 监控最怕的不是报错，是静默失效：RSS 挂了两周，界面上一片安静，
+    # 你会以为「最近没重置」，其实是脚本瞎了。所以连续抓空要主动喊一声。
+    items = []
+    outage = ""
+    try:
+        items = parse_feed(http_get(FEED_URL))
+        if not items:
+            outage = "RSS 返回 0 条"
+    except Exception as e:
+        outage = f"抓取异常：{type(e).__name__}: {e}"
+
+    if outage:
+        streak = int(state.get("zero_streak") or 0) + 1
+        state["zero_streak"] = streak
+        print(f"[outage] 第 {streak} 次连续抓空（{outage}）", file=sys.stderr)
+        # 5 分钟一轮，连续 6 次 = 半小时，足够排除偶发抖动
+        if streak >= ZERO_ALERT_THRESHOLD and not state.get("zero_alerted"):
+            title = f"⚠️ Tibo 监控可能哑火（连续 {streak} 次没抓到公告）"
+            content = (f"监控脚本连续 {streak} 次没有从数据源读到公告。\n\n原因：{outage}\n\n"
+                       f"数据源：{FEED_URL}\n站点：{SITE_URL}\n\n"
+                       f"大概率是 ModelYard 改版或挂了自己去看一眼；如果是源换了，脚本里的 FEED_URL 要跟着改。\n"
+                       f"（这条只报一次，恢复后自动重置）")
+            if channels and not args.dry_run and push_all(title, content, channels):
+                state["zero_alerted"] = True
+            elif not channels:
+                print("[note] 没有推送通道，哑火告警只记录在本机日志", file=sys.stderr)
+        save_state(state)
+        return 2
+
+    # 抓到了：恢复正常，清掉哑火计数
+    if state.get("zero_streak") or state.get("zero_alerted"):
+        print("[recover] 数据源已恢复，重置哑火计数")
+        state["zero_streak"] = 0
+        state["zero_alerted"] = False
+        save_state(state)
+
+    print(f"[feed] 抓到 {len(items)} 条，最新：{items[0]['title']}（{fmt_local(items[0]['pubDate'])}）")
 
     # 通道测试：不管去重，直接推最新一条
     if args.test:
