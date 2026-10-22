@@ -41,6 +41,7 @@ ALL_CATEGORIES_HINT = "「Codex 产品更新」「路线图线索」「功能讨
 
 STATE_FILE = os.environ.get("TIBO_STATE_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json"))
 STATE_MAX = 300  # 最多记 300 条已见 guid
+MAX_FAIL_PER_DAY = 6  # 推送连续失败上限，防止 5 分钟一轮把接口刷爆（尤其密钥失效时）
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) tibo-reset-watch/1.0"
 
@@ -133,7 +134,10 @@ def save_state(state):
     如果每轮都写 updated_at，一天就是 288 次提交，仓库会被刷烂。
     """
     state["seen"] = state["seen"][-STATE_MAX:]
-    payload = json.dumps({"seen": state["seen"], "inited": state["inited"]}, ensure_ascii=False, indent=1)
+    payload = json.dumps(
+        {"seen": state["seen"], "inited": state["inited"], "fail": state.get("fail") or {"date": "", "n": 0}},
+        ensure_ascii=False, indent=1,
+    )
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
@@ -304,13 +308,14 @@ def main():
         if skipped:
             print(f"[filter] 跳过 {skipped} 条非重置类更新（{ALL_CATEGORIES_HINT}）")
 
-    # 无论推不推，新 guid 都要记入 seen，避免下次重复判断
-    state["seen"].extend(it["guid"] for it in fresh)
-    if not args.dry_run:
-        save_state(state)
+    # 被过滤掉的条目直接记入 seen：我们主动不要，不该每轮重复判断
+    picked_guids = {it["guid"] for it in picked}
+    state["seen"].extend(it["guid"] for it in fresh if it["guid"] not in picked_guids)
 
     if not picked:
         print("[idle] 有更新但都不是重置相关，不打扰")
+        if not args.dry_run:
+            save_state(state)
         return 0
 
     picked.sort(key=lambda x: x["_ts"])  # 按真实时间升序：计划→完成，读起来像一条线
@@ -321,7 +326,36 @@ def main():
         print(content)
         print("-" * 50)
         return 0
-    return 0 if push_all(title, content, channels) else 1
+
+    # 没有配置任何通道时，只做记录，记为已见，避免以后配好通道又补推一堆旧闻
+    if not channels:
+        state["seen"].extend(picked_guids)
+        save_state(state)
+        print("[note] 没有配置推送通道，本轮只记录不发送")
+        return 0
+
+    # 关键顺序：先推成功，才把这些条目记为已见。
+    # 反过来的话（先记后推）一旦推送失败，这批公告就永远丢了 —— Server酱 免费额度 5 条/天，
+    # 超了会静默失败，静默失败 + 提前记 seen = 消息永久消失，这是绝对不能留的坑。
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    fail = state.get("fail") or {}
+    if fail.get("date") == today and fail.get("n", 0) >= MAX_FAIL_PER_DAY:
+        print(f"[error] 今天已连续失败 {fail['n']} 次（上限 {MAX_FAIL_PER_DAY}），暂停推送防止刷爆接口；"
+              f"条目保持未读，明天或人工排查后恢复", file=sys.stderr)
+        save_state(state)
+        return 1
+
+    if not push_all(title, content, channels):
+        n = (fail.get("n", 0) if fail.get("date") == today else 0) + 1
+        state["fail"] = {"date": today, "n": n}
+        print(f"[error] 推送失败（今日第 {n} 次），这批条目保持未读，下一轮重试", file=sys.stderr)
+        save_state(state)   # 只落盘被过滤掉的那些，picked 仍未读
+        return 1
+
+    state["seen"].extend(picked_guids)
+    state["fail"] = {"date": today, "n": 0}
+    save_state(state)
+    return 0
 
 
 if __name__ == "__main__":

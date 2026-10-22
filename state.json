@@ -21,5 +21,9 @@
   "https://tibo.modelyard.dev/zh/events/101",
   "https://tibo.modelyard.dev/zh/events/100"
  ],
- "inited": true
+ "inited": true,
+ "fail": {
+  "date": "",
+  "n": 0
+ }
 }
