@@ -1,7 +1,17 @@
 # Tibo Codex 额度重置监控
 
-产出方 WorkBuddy｜日期 2026-10-23｜状态 初版（脚本已自测，通道待雅旭配 token 后做真实送达验收）
+产出方 WorkBuddy｜日期 2026-10-23｜状态 通道已实测打通，云端定时待补 workflow 权限后启用
 来源：<https://tibo.modelyard.dev/zh/feed.xml>
+仓库：<https://github.com/judy123violet-max/tibo-reset-watch>（公开，Actions 无限免费）
+
+## 当前状态（2026-10-23 01:45）
+
+- ✅ RSS 源可用、分类字段可读、脚本自测通过（播种 / 去重 / 过滤 / 排序）
+- ✅ **Server酱 真实送达已打通**：`code 0 / error SUCCESS`，pushid 63311371
+- ✅ 公开仓库已建，`SERVERCHAN_SENDKEY` 已写入 Secrets
+- ⏳ 卡在 GitHub：本机 gh 的 OAuth token 缺 `workflow` scope，workflow 文件推不上去。
+  需雅旭在本机跑一次 `gh auth refresh -h github.com -s workflow`（浏览器点一下授权），之后即可推送并启用 5 分钟定时
+- ❓ 未验证：Server酱 的推送接口从 GitHub 美国机房能不能通（国内直连没问题，出海未实测）
 
 ## 这玩意解决什么
 
