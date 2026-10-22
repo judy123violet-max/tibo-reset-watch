@@ -1,0 +1,2 @@
+# 统一用 LF：workflow 的 run 块里混进 CRLF 会让 Actions 上的 bash 报错
+* text=auto eol=lf
