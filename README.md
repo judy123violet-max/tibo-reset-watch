@@ -1,27 +1,20 @@
 # Tibo Codex 额度重置监控
 
-产出方 WorkBuddy｜日期 2026-10-23｜状态 通道已实测打通，云端定时待补 workflow 权限后启用
+产出方 WorkBuddy｜日期 2026-10-23｜状态 **已上线，云端定时运行中**
 来源：<https://tibo.modelyard.dev/zh/feed.xml>
 仓库：<https://github.com/judy123violet-max/tibo-reset-watch>（公开，Actions 无限免费）
 
-## 当前状态（2026-10-23 01:45）
+## 当前状态（2026-10-23 02:45）
 
-- ✅ RSS 源可用、分类字段可读、脚本自测通过（播种 / 去重 / 过滤 / 排序）
-- ✅ **Server酱 真实送达已打通**：`code 0 / error SUCCESS`，雅旭手机已确认收到；免费额度 **5 条/天**（雅旭确认）
-- ✅ 端到端复验：模拟新公告 → 合并成 1 条推送 → 成功后去重生效（再跑一轮 `[idle] 无新条目`）
-- ✅ 失败不吞消息：故意用错密钥验证过，推送失败时该批公告**不记为已读**，下一轮重试；每日失败超 6 次则熔断，防止 5 分钟一轮把接口刷爆
-- ✅ 公开仓库已建，`SERVERCHAN_SENDKEY` 已写入 Secrets
-- ⏳ 卡在 GitHub：本机 gh 的 OAuth token 缺 `workflow` scope，workflow 文件推不上去。
-  ⚠️ **必须带代理跑**（本机直连 github.com 超时，环境变量里那个 31539 端口是坏的）：
+全部打通，云端实测证据：
 
-  ```powershell
-  $env:HTTPS_PROXY="http://127.0.0.1:17890"
-  $env:HTTP_PROXY="http://127.0.0.1:17890"
-  & "C:\Program Files\GitHub CLI\gh.exe" auth refresh -h github.com -s workflow
-  ```
-
-  浏览器弹出来点一下授权即可，之后即可推送并启用 5 分钟定时
-- ❓ 未验证：Server酱 的推送接口从 GitHub 美国机房能不能通（国内直连没问题，出海未实测）
+- ✅ 抓 RSS：Actions 日志 `[feed] 抓到 20 条`
+- ✅ **GitHub 美国机房能连国内数据源**（这曾是最大未知项，已证伪风险）
+- ✅ **云端 → Server酱 → 手机微信 全链路走通**：`{"code":0,"error":"SUCCESS","pushid":"63316419"}`（从 GitHub runner 发出）
+- ✅ 云端首跑 `conclusion: success`，state.json 无变化时跳过提交（不会刷提交）
+- ✅ 失败不吞消息、每日失败熔断、连续抓空哑火告警、缺口水位线检测、分类 fail-open —— 全部本地实测过
+- ⏳ 待观察：cron 真正的定时触发效果（Actions 自带几分钟到十几分钟延迟）
+- 🔧 手动测试：仓库 → Actions → tibo-reset-watch → Run workflow，勾上 `test` 就只发一条测试消息
 
 ## 这玩意解决什么
 
