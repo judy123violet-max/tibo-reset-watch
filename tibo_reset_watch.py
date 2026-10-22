@@ -37,12 +37,14 @@ SITE_URL = "https://tibo.modelyard.dev/zh/"
 
 # 只关心这几类；"Codex 产品更新" 默认不推（想看就加 --all 或改这里）
 WATCH_CATEGORIES = {"计划重置", "重置完成", "重置卡", "时间变更", "政策"}
-ALL_CATEGORIES_HINT = "「Codex 产品更新」「路线图线索」「功能讨论」默认不推送"
+# 分类白名单见下方 WATCH_CATEGORIES / is_watched()：只跳过明确认识的产品更新类，
+# 遇到从没见过的分类一律照推（fail-open），避免站点改版后静默漏推
 
 STATE_FILE = os.environ.get("TIBO_STATE_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json"))
 STATE_MAX = 300  # 最多记 300 条已见 guid
 MAX_FAIL_PER_DAY = 6  # 推送连续失败上限，防止 5 分钟一轮把接口刷爆（尤其密钥失效时）
 ZERO_ALERT_THRESHOLD = 6  # 连续 6 次抓不到公告（约半小时）就发一次哑火告警
+GAP_SLACK_SECONDS = 3600  # 缺口检测容差：RSS 自身也有抓取延迟，留 1 小时余量
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) tibo-reset-watch/1.0"
 
@@ -142,6 +144,8 @@ def save_state(state):
             "fail": state.get("fail") or {"date": "", "n": 0},
             "zero_streak": int(state.get("zero_streak") or 0),
             "zero_alerted": bool(state.get("zero_alerted")),
+            "watermark_ts": float(state.get("watermark_ts") or 0),
+            "gap_alerted": bool(state.get("gap_alerted")),
         },
         ensure_ascii=False, indent=1,
     )
@@ -157,12 +161,36 @@ def save_state(state):
     return True
 
 
+# ---------------------------------------------------------------- 分类判定
+# dsh 复核指出：白名单 + 静默丢弃最危险 —— 站点哪天新增分类，脚本会永远不推，
+# 而日志照样打印"跳过 N 条"，看起来一切正常。所以改成 fail-open：
+# 只跳过「明确认识且确实不需要」的分类，遇到没见过的分类一律推。
+WATCH_CATEGORIES = {"计划重置", "重置完成", "重置卡", "时间变更", "政策"}
+OTHER_KNOWN_CATEGORIES = {"Codex 产品更新", "路线图线索", "功能讨论"}
+UNKNOWN_TAG = "⚠️新分类待确认"
+
+
+def is_watched(it, allow_all=False):
+    if allow_all:
+        return True
+    cats = set(it["categories"])
+    if not cats:                              # 没打分类 = 未知 → 推
+        return True
+    if cats & WATCH_CATEGORIES:
+        return True
+    if not (cats & OTHER_KNOWN_CATEGORIES):   # 出现了从没见过的分类 → 推
+        return True
+    return False
+
+
 # ---------------------------------------------------------------- 文案
 def build_message(items):
     head = f"⚡ Tibo 有 {len(items)} 条 Codex 额度动静"
     lines = [head, ""]
     for it in items:
         cat = "/".join(it["categories"]) or "未分类"
+        if not (set(it["categories"]) & (WATCH_CATEGORIES | OTHER_KNOWN_CATEGORIES)):
+            cat = f"{cat} {UNKNOWN_TAG}"
         lines.append(f"【{cat}】{fmt_local(it['pubDate'])}")
         lines.append(it["title"])
         if it["desc"]:
@@ -322,6 +350,32 @@ def main():
             return 3
         return 0 if push_all(title, content, channels, args.dry_run) else 1
 
+    # ---- 缺口检测（dsh 复核提出）----
+    # RSS 只保留最近 20 条（实测跨度约 18 天）。监控要是停跑超过这个窗口，
+    # 中间那些公告既不会推、也不在 seen 里，而且全程没有任何报错 —— 这就是静默丢事件。
+    # 用「上次成功检查的时刻」当水位线：feed 里最旧一条如果比水位线还新，说明中间断了。
+    now_ts = datetime.now(timezone.utc).timestamp()
+    wm = float(state.get("watermark_ts") or 0)
+    oldest_ts = min(it["_ts"] for it in items)
+    if wm and oldest_ts > wm + GAP_SLACK_SECONDS:
+        gap_h = (oldest_ts - wm) / 3600
+        print(f"[gap] 检测到缺口：feed 最旧一条比上次检查还晚 {gap_h:.1f} 小时", file=sys.stderr)
+        if not state.get("gap_alerted"):
+            title = "⚠️ Tibo 监控可能有缺口"
+            content = (f"监控上次成功检查是 {gap_h:.0f} 小时前，但数据源里最旧的一条比那还新。\n\n"
+                       f"意思是：中间这段时间可能发生过公告，但已经滚出 RSS 窗口，脚本没看到、也没推。\n\n"
+                       f"数据源：{FEED_URL}\n去站点翻一下这段时间的重置历史：{SITE_URL}\n\n"
+                       f"（这条只报一次，恢复后自动重置）")
+            if channels and not args.dry_run and push_all(title, content, channels):
+                state["gap_alerted"] = True
+            elif not channels:
+                print("[note] 没有推送通道，缺口告警只记录在本机日志", file=sys.stderr)
+    elif wm:
+        state["gap_alerted"] = False
+    state["watermark_ts"] = now_ts
+    if not args.dry_run:
+        save_state(state)
+
     # 首次运行：只播种基线
     if not state["inited"]:
         state["seen"] = [it["guid"] for it in items]
@@ -342,10 +396,10 @@ def main():
     if args.all:
         picked = fresh
     else:
-        picked = [it for it in fresh if set(it["categories"]) & WATCH_CATEGORIES]
+        picked = [it for it in fresh if is_watched(it)]
         skipped = len(fresh) - len(picked)
         if skipped:
-            print(f"[filter] 跳过 {skipped} 条非重置类更新（{ALL_CATEGORIES_HINT}）")
+            print(f"[filter] 跳过 {skipped} 条明确属于产品更新的条目（未知分类一律会推）")
 
     # 被过滤掉的条目直接记入 seen：我们主动不要，不该每轮重复判断
     picked_guids = {it["guid"] for it in picked}

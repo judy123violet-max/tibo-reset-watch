@@ -27,5 +27,7 @@
   "n": 0
  },
  "zero_streak": 0,
- "zero_alerted": false
+ "zero_alerted": false,
+ "watermark_ts": 1792694834.790309,
+ "gap_alerted": false
 }
