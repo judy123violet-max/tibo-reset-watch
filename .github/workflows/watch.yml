@@ -17,7 +17,12 @@ name: tibo-reset-watch
 on:
   schedule:
     - cron: "*/5 * * * *"
-  workflow_dispatch: {}   # 允许手动点一下就跑
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "勾上则只发一条测试消息（不去重、不改 state）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write         # 需要回写 state.json 做去重
@@ -46,7 +51,13 @@ jobs:
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
           TZ: Asia/Shanghai
-        run: python tibo_reset_watch.py
+        run: |
+          if [ "${{ inputs.test }}" = "true" ]; then
+            echo "== 测试模式：推一条测试消息 =="
+            python tibo_reset_watch.py --test
+          else
+            python tibo_reset_watch.py
+          fi
 
       - name: 回写去重状态
         run: |
