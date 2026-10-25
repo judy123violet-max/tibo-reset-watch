@@ -22,15 +22,16 @@
   "https://tibo.modelyard.dev/zh/events/100",
   "https://tibo.modelyard.dev/zh/events/129",
   "https://tibo.modelyard.dev/zh/events/130",
-  "https://tibo.modelyard.dev/zh/events/131"
+  "https://tibo.modelyard.dev/zh/events/131",
+  "https://tibo.modelyard.dev/zh/events/132"
  ],
  "inited": true,
  "fail": {
-  "date": "2026-10-23",
+  "date": "2026-10-25",
   "n": 0
  },
  "zero_streak": 0,
  "zero_alerted": false,
- "watermark_ts": 1792910713.519409,
+ "watermark_ts": 1792928570.475902,
  "gap_alerted": false
 }
